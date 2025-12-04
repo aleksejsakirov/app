@@ -1,27 +1,39 @@
-const express = require('express')
-const app = express()
-const session = require('express-session');
-const server = require('http').Server(app)
-const io = require('socket.io')(server)
-const { v4: uuidV4 } = require('uuid')
-const mysql2 = require('mysql2');
+const express = require('express');
+const app = express();
+const server = require('http').Server(app);
+const io = require('socket.io')(server);
+const { v4: uuidV4 } = require('uuid');
 const { Sequelize, DataTypes } = require('sequelize');
+const mysql = require('mysql2/promise');
+const ses = require('express-session');
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.set('view engine', 'ejs')
-app.use(express.static('public'))
+app.set('view engine', 'ejs');
+app.use(express.static('public'));
 
-app.use(session({
-	secret: '1111',
-	resave: false,
-	saveUninitialized: true,
-	cookie: { secure: false }
-}));
+app.use(ses(
+	{
+		secret: '1111',
+		resave: false,
+		saveUninitialized: true,
+		cookie: { secure: false }
+	}));
+
+async function createDB() {
+    const conn = await mysql.createConnection({ host: 'localhost', user: 'root', password: '4385' });
+    await conn.query(`CREATE DATABASE IF NOT EXISTS db_users_pr`);
+    await conn.end();
+}
+
+(async () => {
+    await createDB();
+    await init(); 
+})();
 
 const conn_seq = new Sequelize('db_users_pr', 'root', '4385', {
 	host: 'localhost',
-	dialect: 'mariadb',
+	dialect: 'mysql',
 	logging: false,
 	define: {
 		timestamps: false
@@ -51,12 +63,13 @@ async function create_admin() {
 		await User.create({ passwd: 1, role: "admin" });
 	}
 }
-create_admin();
 
-conn_seq.sync().then(result => {
-	console.log();
-})
-	.catch(err => console.log());
+async function init() {
+	await conn_seq.sync({ alter: true });
+	await create_admin();
+}
+
+init();
 
 function html_users_table(users) {
 	let html = `
@@ -120,45 +133,50 @@ function html_users_table(users) {
 	return html;
 }
 
-app.get('/', async (req, res) => {
+app.get('/', (req, res) => {
 	res.sendFile(__dirname + '/login.html');
-})
+});
 
 app.get('/show_users', async (req, res) => {
-	const users = await User.findAll({ where: { role: "user" } });
-	res.send(html_users_table(users));
-})
+	if (req.session.role){
+		const users = await User.findAll({ where: { role: 'user' } });
+		return res.send(html_users_table(users));
+	}
+	res.redirect("/");
+});
 
 app.post("/admin/add", async (req, res) => {
 	const { role, passwd } = req.body;
 	const user = await User.create({ passwd: passwd, role: role });
 	res.redirect("/show_users");
-})
+});
 
 app.post("/admin/delete", async (req, res) => {
 	const { id } = req.body;
 	const user = await User.destroy({ where: { id: id } });
 	res.redirect("/show_users");
-})
+});
 
 app.post("/register", async (req, res) => {
 	const { login, password } = req.body;
-	if (!login || !password)
+	if (!login || !password || !(/^\d+$/.test(login)))
 		return res.json({ error: "Введите логин и пароль" });
 
-	const user = await User.findOne({ where: { id: login } });
+	const user = await User.findOne({ where: { id: login, passwd: password } });
 
 	if (!user) {
 		return res.json({ error: "Неверный логин или пароль" });
 	}
-
+	if (user.role == "admin"){
+		req.session.role = user.role;
+	}
 	return res.json({ success: true, role: user.role });
 });
 
 
 app.get('/room', (req, res) => {
 	res.render('room', { roomId: req.params.room })
-})
+});
 
 io.on('connection', socket => {
 	socket.on('join-room', (roomId, userId) => {
