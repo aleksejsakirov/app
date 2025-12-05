@@ -26,6 +26,11 @@ async function createDB() {
     await conn.end();
 }
 
+async function init() {
+	await conn_seq.sync({ alter: true });
+	await create_admin();
+}
+
 (async () => {
     await createDB();
     await init(); 
@@ -63,13 +68,6 @@ async function create_admin() {
 		await User.create({ passwd: 1, role: "admin" });
 	}
 }
-
-async function init() {
-	await conn_seq.sync({ alter: true });
-	await create_admin();
-}
-
-init();
 
 function html_users_table(users) {
 	let html = `
